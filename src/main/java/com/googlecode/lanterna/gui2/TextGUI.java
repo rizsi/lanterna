@@ -109,4 +109,14 @@ public interface TextGUI {
          */
         boolean onUnhandledKeyStroke(TextGUI textGUI, KeyStroke keyStroke);
     }
+    /**
+     * The clipboard support that should be used by text editors for copy/paste actions.
+     * @return
+     */
+	ClipboardSupport getClipboardSupport();
+	/**
+	 * It is possible to override the clipboard support implementation before usage.
+	 * @param clipboardSupport
+	 */
+	void setClipboardSupport(ClipboardSupport clipboardSupport); 
 }

@@ -18,15 +18,16 @@
  */
 package com.googlecode.lanterna.gui2;
 
-import com.googlecode.lanterna.TerminalTextUtils;
-import com.googlecode.lanterna.TerminalPosition;
-import com.googlecode.lanterna.TerminalSize;
-import com.googlecode.lanterna.graphics.ThemeDefinition;
-import com.googlecode.lanterna.input.KeyStroke;
-
 import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Pattern;
+
+import com.googlecode.lanterna.TerminalPosition;
+import com.googlecode.lanterna.TerminalSize;
+import com.googlecode.lanterna.TerminalTextUtils;
+import com.googlecode.lanterna.graphics.ThemeDefinition;
+import com.googlecode.lanterna.graphics.ThemeStyle;
+import com.googlecode.lanterna.input.KeyStroke;
 
 /**
  * This component keeps a text content that is editable by the user. A TextBox can be single line or multiline and lets
@@ -53,11 +54,248 @@ public class TextBox extends AbstractInteractableComponent<TextBox> {
         MULTI_LINE,
         ;
     }
+    public class SelectionModel
+    {
+    	/**
+    	 * First line of selection (including)
+    	 */
+    	public int fromLine;
+    	/**
+    	 * First column of selection (including)
+    	 */
+    	public int fromCol;
+    	/**
+    	 * Last line of selection (including)
+    	 */
+    	public int toLine;
+    	/**
+    	 * Last column of selection (excluding)
+    	 */
+    	public int toCol;
+		public boolean active;
+		@Override
+		public String toString() {
+			return "["+fromLine+", "+fromCol+" -> "+toLine+", "+toCol+"]";
+		}
+    }
+    public interface IDataModelListener
+    {
 
-    private final List<String> lines;
+		void linesDeleted(int index, int size);
+
+		void linesAdded(int index, int size);
+    	
+    }
+    /**
+     * Stores the text edited in the editor as lines.
+     * Also provides event that can be used to maintain models that are dependent on this datamodel.
+     * (For example a markers model).
+     */
+    class DataModel
+    {
+        private final List<String> lines=new ArrayList<>();
+
+		public int size() {
+			return lines.size();
+		}
+
+		public Iterable<String> getLines() {
+			return lines;
+		}
+
+		public void clear() {
+			List<String> copy=new ArrayList<>(lines);
+			addUndoPiece(new TextEditorUndoPiece() {
+				@Override
+				void doUndo() {
+					lines.addAll(copy);
+					linesAdded(0, copy.size());
+				}
+				@Override
+				void doRedo() {
+					lines.clear();
+					linesDeleted(0, copy.size());
+				}
+			});
+			lines.clear();
+			linesDeleted(0, copy.size());
+		}
+
+		private void linesDeleted(int index, int size) {
+			for(IDataModelListener l: datamodelListeners)
+			{
+				l.linesDeleted(index, size);
+			}
+		}
+
+		private void linesAdded(int index, int size) {
+			for(IDataModelListener l: datamodelListeners)
+			{
+				l.linesAdded(index, size);
+			}
+		}
+		public String get(int row) {
+			return lines.get(row);
+		}
+
+		public void add(String string) {
+			addUndoPiece(new TextEditorUndoPiece() {
+				@Override
+				void doUndo() {
+					lines.remove(lines.size()-1);
+					linesDeleted(lines.size()-1, 1);
+				}
+				@Override
+				void doRedo() {
+					lines.add(string);
+					linesAdded(lines.size()-1, 1);
+				}
+			});
+			lines.add(string);
+			linesAdded(lines.size()-1, 1);
+		}
+
+		public void set(int row, String line) {
+			String prev=lines.set(row, line);
+			addUndoPiece(new TextEditorUndoPiece() {
+				@Override
+				void doUndo() {
+					lines.set(row, prev);
+				}
+				@Override
+				void doRedo() {
+					lines.set(row, line);
+				}
+			});
+		}
+
+		public void remove(int index, int nLine) {
+			if(nLine>0)
+			{
+				List<String> subl=lines.subList(index, index+nLine);
+				List<String> old=new ArrayList<>(subl);
+				subl.clear();
+				addUndoPiece(new TextEditorUndoPiece() {
+					@Override
+					void doUndo() {
+						lines.addAll(index, old);
+						linesAdded(index,nLine);
+					}
+					@Override
+					void doRedo() {
+						lines.subList(index, index+nLine).clear();
+						linesDeleted(index,nLine);
+					}
+				});
+				linesDeleted(index, nLine);
+			}
+		}
+
+		public void add(int i, String newLine) {
+			addUndoPiece(new TextEditorUndoPiece() {
+				@Override
+				void doUndo() {
+					lines.remove(i);
+					linesDeleted(i,1);
+				}
+				@Override
+				void doRedo() {
+					lines.add(i, newLine);
+					linesAdded(i,1);
+				}
+			});
+			lines.add(i, newLine);
+			linesAdded(i,1);
+		}
+
+		public void append(int i, String string) {
+			String newVal=lines.get(i)+string;
+			String prev=lines.set(i, newVal);
+			addUndoPiece(new TextEditorUndoPiece() {
+				@Override
+				void doUndo() {
+					lines.set(i, prev);
+				}
+				@Override
+				void doRedo() {
+					lines.set(i,newVal);
+				}
+			});
+		}
+
+		public void addAll(int i, List<String> subList) {
+			lines.addAll(i, subList);
+			linesAdded(i, subList.size());
+			addUndoPiece(new TextEditorUndoPiece() {
+				@Override
+				void doUndo() {
+					lines.subList(i, i+subList.size()).clear();
+					linesDeleted(i, subList.size());
+				}
+				@Override
+				void doRedo() {
+					lines.addAll(i, subList);
+					linesAdded(i, subList.size());
+				}
+			});
+		}
+    }
+    class LinePart
+    {
+    	boolean selected;
+    	String characters;
+    	int offset;
+    	int length;
+		public LinePart(boolean selected, String characters, int offset,
+				int length) {
+			super();
+			this.selected = selected;
+			this.characters = characters;
+			this.offset = offset;
+			this.length = length;
+		}
+		@Override
+		public String toString() {
+			return "part: "+selected+" "+characters;
+		}
+    }
+    abstract class TextEditorUndoPiece extends UndoPiece
+    {
+       	abstract void doUndo();
+       	abstract void doRedo();
+       	@Override
+       	public void undo() {
+       		doUndo();
+       	}
+       	@Override
+       	public void redo() {
+       		doRedo();
+       	}
+       	@Override
+       	public void undoCommit() {
+       		fixCaretPosition();
+       	}
+       	@Override
+       	public void redoCommit() {
+      		fixCaretPosition();
+       	}
+    }
+    private boolean markOn=false;
+    private DataModel lines=new DataModel();
+    private SelectionModel selection=new SelectionModel();
+    private TerminalPosition selectionStartAt=null;
     private final Style style;
 
-    private TerminalPosition caretPosition;
+    private TerminalPosition _caretPosition;
+    /**
+     * Most text editors support the feature that when we move the cursor with up/down arrows
+     * and we are at the column 15 but the next column only has 10 columns then we remember internally that we want to be
+     * at the column 15. And next time when we move to a line that has 15 columns the position is reset to that position.
+     * (Editing, left/right arrows, etc clears this state. up, down pgup, pgdown preserves this state.)
+     * -1 means that this feature is not active currently.
+     */
+    private int wantToBeAtColumn=-1;
+    private boolean wantoToBeAtColumnShouldBePreserved=false;
     private boolean caretWarp;
     private boolean readOnly;
     private boolean horizontalFocusSwitching;
@@ -65,9 +303,10 @@ public class TextBox extends AbstractInteractableComponent<TextBox> {
     private final int maxLineLength;
     private int longestRow;
     private Character mask;
-    private Pattern validationPattern;
+    private ICommandStackRecorder recorder;
+    private List<IDataModelListener> datamodelListeners=new ArrayList<>();
 
-    /**
+	/**
      * Default constructor, this creates a single-line {@code TextBox} of size 10 which is initially empty
      */
     public TextBox() {
@@ -127,21 +366,19 @@ public class TextBox extends AbstractInteractableComponent<TextBox> {
      * @param style Style to use for this {@code TextBox}, instead of auto-detecting
      */
     public TextBox(TerminalSize preferredSize, String initialContent, Style style) {
-        this.lines = new ArrayList<String>();
         this.style = style;
         this.readOnly = false;
         this.caretWarp = false;
         this.verticalFocusSwitching = true;
         this.horizontalFocusSwitching = (style == Style.SINGLE_LINE);
-        this.caretPosition = TerminalPosition.TOP_LEFT_CORNER;
+        this._caretPosition = TerminalPosition.TOP_LEFT_CORNER;
         this.maxLineLength = -1;
         this.longestRow = 1;    //To fit the cursor
         this.mask = null;
-        this.validationPattern = null;
         setText(initialContent);
 
         // Re-adjust caret position
-        this.caretPosition = TerminalPosition.TOP_LEFT_CORNER.withColumn(getLine(0).length());
+        this._caretPosition = TerminalPosition.TOP_LEFT_CORNER.withColumn(getLine(0).length());
 
         if (preferredSize == null) {
             preferredSize = new TerminalSize(Math.max(10, longestRow), lines.size());
@@ -150,49 +387,67 @@ public class TextBox extends AbstractInteractableComponent<TextBox> {
     }
 
     /**
-     * Sets a pattern on which the content of the text box is to be validated. For multi-line TextBox:s, the pattern is
-     * checked against each line individually, not the content as a whole. Partial matchings will not be allowed, the
-     * whole pattern must match, however, empty lines will always be allowed. When the user tried to modify the content
-     * of the TextBox in a way that does not match the pattern, the operation will be silently ignored. If you set this
-     * pattern to {@code null}, all validation is turned off.
-     * @param validationPattern Pattern to validate the lines in this TextBox against, or {@code null} to disable
-     * @return itself
-     */
-    public synchronized TextBox setValidationPattern(Pattern validationPattern) {
-        if(validationPattern != null) {
-            for(String line: lines) {
-                if(!validated(line)) {
-                    throw new IllegalStateException("TextBox validation pattern " + validationPattern + " does not match existing content");
-                }
-            }
-        }
-        this.validationPattern = validationPattern;
-        return this;
-    }
-
-    /**
      * Updates the text content of the {@code TextBox} to the supplied string.
      * @param text New text to assign to the {@code TextBox}
      * @return Itself
      */
     public synchronized TextBox setText(String text) {
-        String[] split = text.split("\n");
+        List<String> split = cleverSplit(text);
         lines.clear();
         longestRow = 1;
         for(String line : split) {
             addLine(line);
         }
-        if(caretPosition.getRow() > lines.size() - 1) {
-            caretPosition = caretPosition.withRow(lines.size() - 1);
+        if(_caretPosition.getRow() > lines.size() - 1) {
+            _caretPosition = _caretPosition.withRow(lines.size() - 1);
         }
-        if(caretPosition.getColumn() > lines.get(caretPosition.getRow()).length()) {
-            caretPosition = caretPosition.withColumn(lines.get(caretPosition.getRow()).length());
+        if(_caretPosition.getColumn() > lines.get(_caretPosition.getRow()).length()) {
+            _caretPosition = _caretPosition.withColumn(lines.get(_caretPosition.getRow()).length());
+        }
+        if(recorder!=null)
+        {
+        	recorder.commandFinished();
         }
         invalidate();
+        dataChanged();
         return this;
     }
+    /**
+     * 
+     * @param pos
+     * @param text
+     * @return the position of the last character inserted
+     */
+	public synchronized TerminalPosition insertText(TerminalPosition pos, String text) {
+        List<String> split = cleverSplit(text);
+        longestRow = 1;
+        String pre=getLine(pos.getRow()).substring(0, pos.getColumn());
+        String post=getLine(pos.getRow()).substring(pos.getColumn());
+        TerminalPosition ret;
+        if(split.size()==1)
+        {
+        	String newLine=pre+split.get(0)+post;
+        	lines.set(pos.getRow(), newLine);
+        	ret=pos.withRelativeColumn(split.get(0).length());
+        }else if(split.size()>1)
+        {
+        	String newLine=pre+split.get(0);
+        	lines.set(pos.getRow(), newLine);
+        	lines.addAll(pos.getRow()+1, split.subList(1, split.size()-1));
+        	newLine=split.get(split.size()-1)+post;
+        	lines.add(pos.getRow()+split.size()-1, newLine);
+        	ret=new TerminalPosition(split.get(split.size()-1).length(), pos.getRow()+split.size()-1);
+        }
+        else
+        {
+        	ret=pos;
+        }
+        invalidate();
+        dataChanged();
+        return ret;
+	}
 
-    @Override
+	@Override
     public TextBoxRenderer getRenderer() {
         return (TextBoxRenderer)super.getRenderer();
     }
@@ -223,18 +478,31 @@ public class TextBox extends AbstractInteractableComponent<TextBox> {
             bob.append(c);
         }
         String string = bob.toString();
-        if(!validated(string)) {
-            throw new IllegalStateException("TextBox validation pattern " + validationPattern + " does not match the supplied text");
-        }
         int lineWidth = TerminalTextUtils.getColumnWidth(string);
         lines.add(string);
         if(longestRow < lineWidth + 1) {
             longestRow = lineWidth + 1;
         }
         invalidate();
+        dataChanged();
         return this;
     }
-
+    /**
+     * Append string to an existing line
+     * @param i index of the line to append string to.
+     * @param string
+     */
+	public void appendLine(int i, String string) {
+		if(string.contains("\n"))
+		{
+			throw new IllegalArgumentException("String to append must not contain newline character.");
+		}
+		lines.append(i, string);
+		if(recorder!=null)
+		{
+			recorder.commandFinished();
+		}
+	}
     /**
      * Sets if the caret should jump to the beginning of the next line if right arrow is pressed while at the end of a
      * line. Similarly, pressing left arrow at the beginning of a line will make the caret jump to the end of the
@@ -262,7 +530,7 @@ public class TextBox extends AbstractInteractableComponent<TextBox> {
      * @return Position of the text input caret
      */
     public TerminalPosition getCaretPosition() {
-        return caretPosition;
+        return _caretPosition;
     }
 
     /**
@@ -298,7 +566,7 @@ public class TextBox extends AbstractInteractableComponent<TextBox> {
         else if(column > lines.get(line).length()) {
             column = lines.get(line).length();
         }
-        caretPosition = caretPosition.withRow(line).withColumn(column);
+        _caretPosition = _caretPosition.withRow(line).withColumn(column);
         return this;
     }
 
@@ -447,203 +715,413 @@ public class TextBox extends AbstractInteractableComponent<TextBox> {
 
     @Override
     public synchronized Result handleKeyStroke(KeyStroke keyStroke) {
-        if(readOnly) {
-            return handleKeyStrokeReadOnly(keyStroke);
-        }
-        String line = lines.get(caretPosition.getRow());
+    	Result r;
+		try {
+			wantoToBeAtColumnShouldBePreserved=false;
+			r = handleKeyStrokeWrapped(keyStroke);
+		} catch (Exception e) {
+			// TODO Exceptions in key handling are caught because they would cause the application to crash.
+			// We return handled as the key processing was started to be handled.
+			e.printStackTrace();
+			return Result.HANDLED;
+		}
+		if(!wantoToBeAtColumnShouldBePreserved)
+		{
+			wantToBeAtColumn=-1;
+		}
+    	if(recorder!=null)
+    	{
+    		recorder.commandFinished();
+    	}
+    	return r;
+    }
+    public synchronized Result handleKeyStrokeWrapped(KeyStroke keyStroke) {
         switch(keyStroke.getKeyType()) {
             case Character:
+            {
+            	if(keyStroke.isCtrlDown())
+            	{
+            		switch (keyStroke.getCharacter()) {
+					case 'c':
+					{
+						String s=getSelectedContent();
+						if(s!=null)
+						{
+							getTextGUI().getClipboardSupport().copy(s);
+						}
+						break;
+					}
+					case 'x':
+					{
+						String s=getSelectedContent();
+						if(s!=null)
+						{
+							getTextGUI().getClipboardSupport().copy(s);
+							if(readOnly)
+							{
+								return Result.HANDLED;
+							}
+							deleteSelectedContent();
+			                dataChanged();
+						}
+						break;
+					}
+					case 'v':
+					{
+						if(readOnly)
+						{
+							return Result.HANDLED;
+						}
+		            	if(selection.active)
+		            	{
+		            		deleteSelectedContent();
+		            	}
+						String s=getTextGUI().getClipboardSupport().paste();
+						if(s!=null)
+						{
+							_caretPosition=insertText(_caretPosition, s);
+							fixCaretPosition();
+						}
+		                dataChanged();
+						break;
+					}
+					default:
+						break;
+					}
+            		break;
+            	}
+            	if(keyStroke.isAltDown())
+            	{
+            		// ALT+char combinations are not handled.
+            		break;
+            	}
+				if(readOnly)
+				{
+					return Result.HANDLED;
+				}
+            	if(selection.active)
+            	{
+            		deleteSelectedContent();
+                    dataChanged();
+            	}
+                String line = lines.get(_caretPosition.getRow());
                 if(maxLineLength == -1 || maxLineLength > line.length() + 1) {
-                    line = line.substring(0, caretPosition.getColumn()) + keyStroke.getCharacter() + line.substring(caretPosition.getColumn());
-                    if(validated(line)) {
-                        lines.set(caretPosition.getRow(), line);
-                        caretPosition = caretPosition.withRelativeColumn(1);
-                    }
+                    line = line.substring(0, _caretPosition.getColumn()) + keyStroke.getCharacter() + line.substring(_caretPosition.getColumn());
+                    lines.set(_caretPosition.getRow(), line);
+                    _caretPosition = _caretPosition.withRelativeColumn(1);
+                    dataChanged();
                 }
                 return Result.HANDLED;
+            }
             case Backspace:
-                if(caretPosition.getColumn() > 0) {
-                    line = line.substring(0, caretPosition.getColumn() - 1) + line.substring(caretPosition.getColumn());
-                    if(validated(line)) {
-                        lines.set(caretPosition.getRow(), line);
-                        caretPosition = caretPosition.withRelativeColumn(-1);
-                    }
+            {
+				if(readOnly)
+				{
+					return Result.HANDLED;
+				}
+            	if(selection.active)
+            	{
+            		deleteSelectedContent();
+                    dataChanged();
+            		return Result.HANDLED;
+            	}
+                String line = lines.get(_caretPosition.getRow());
+                if(_caretPosition.getColumn() > 0) {
+                    line = line.substring(0, _caretPosition.getColumn() - 1) + line.substring(_caretPosition.getColumn());
+                    lines.set(_caretPosition.getRow(), line);
+                    _caretPosition = _caretPosition.withRelativeColumn(-1);
                 }
-                else if(style == Style.MULTI_LINE && caretPosition.getRow() > 0) {
-                    String concatenatedLines = lines.get(caretPosition.getRow() - 1) + line;
-                    if(validated(concatenatedLines)) {
-                        lines.remove(caretPosition.getRow());
-                        caretPosition = caretPosition.withRelativeRow(-1);
-                        caretPosition = caretPosition.withColumn(lines.get(caretPosition.getRow()).length());
-                        lines.set(caretPosition.getRow(), concatenatedLines);
-                    }
+                else if(style == Style.MULTI_LINE && _caretPosition.getRow() > 0) {
+                    String concatenatedLines = lines.get(_caretPosition.getRow() - 1) + line;
+                    lines.remove(_caretPosition.getRow(), 1);
+                    _caretPosition = _caretPosition.withRelativeRow(-1);
+                    _caretPosition = _caretPosition.withColumn(lines.get(_caretPosition.getRow()).length());
+                    lines.set(_caretPosition.getRow(), concatenatedLines);
                 }
+                dataChanged();
                 return Result.HANDLED;
+            }
             case Delete:
-                if(caretPosition.getColumn() < line.length()) {
-                    line = line.substring(0, caretPosition.getColumn()) + line.substring(caretPosition.getColumn() + 1);
-                    if(validated(line)) {
-                        lines.set(caretPosition.getRow(), line);
-                    }
+            {
+				if(readOnly)
+				{
+					return Result.HANDLED;
+				}
+            	if(selection.active)
+            	{
+            		deleteSelectedContent();
+                    dataChanged();
+                    return Result.HANDLED;
+            	}
+                String line = lines.get(_caretPosition.getRow());
+                if(_caretPosition.getColumn() < line.length()) {
+                    line = line.substring(0, _caretPosition.getColumn()) + line.substring(_caretPosition.getColumn() + 1);
+                    lines.set(_caretPosition.getRow(), line);
                 }
-                else if(style == Style.MULTI_LINE && caretPosition.getRow() < lines.size() - 1) {
-                    String concatenatedLines = line + lines.get(caretPosition.getRow() + 1);
-                    if(validated(concatenatedLines)) {
-                        lines.set(caretPosition.getRow(), concatenatedLines);
-                        lines.remove(caretPosition.getRow() + 1);
-                    }
+                else if(style == Style.MULTI_LINE && _caretPosition.getRow() < lines.size() - 1) {
+                    String concatenatedLines = line + lines.get(_caretPosition.getRow() + 1);
+                    lines.set(_caretPosition.getRow(), concatenatedLines);
+                    lines.remove(_caretPosition.getRow() + 1, 1);
                 }
+                dataChanged();
                 return Result.HANDLED;
+            }
             case ArrowLeft:
-                if(caretPosition.getColumn() > 0) {
-                    caretPosition = caretPosition.withRelativeColumn(-1);
+            	checkSelectionStart(keyStroke);
+                if(_caretPosition.getColumn() > 0) {
+                    setCaretPositionCheckSelect(_caretPosition.withRelativeColumn(-1));
                 }
-                else if(style == Style.MULTI_LINE && caretWarp && caretPosition.getRow() > 0) {
-                    caretPosition = caretPosition.withRelativeRow(-1);
-                    caretPosition = caretPosition.withColumn(lines.get(caretPosition.getRow()).length());
+                else if(style == Style.MULTI_LINE && caretWarp && getCaretPosition().getRow() > 0) {
+                	setCaretPositionCheckSelect(_caretPosition.withRelativeRow(-1).withColumn(lines.get(_caretPosition.getRow()-1).length()));
                 }
                 else if(horizontalFocusSwitching) {
                     return Result.MOVE_FOCUS_LEFT;
                 }
                 return Result.HANDLED;
             case ArrowRight:
-                if(caretPosition.getColumn() < lines.get(caretPosition.getRow()).length()) {
-                    caretPosition = caretPosition.withRelativeColumn(1);
+            	checkSelectionStart(keyStroke);
+                if(_caretPosition.getColumn() < lines.get(_caretPosition.getRow()).length()) {
+                	setCaretPositionCheckSelect(_caretPosition.withRelativeColumn(1));
                 }
-                else if(style == Style.MULTI_LINE && caretWarp && caretPosition.getRow() < lines.size() - 1) {
-                    caretPosition = caretPosition.withRelativeRow(1);
-                    caretPosition = caretPosition.withColumn(0);
+                else if(style == Style.MULTI_LINE && caretWarp && _caretPosition.getRow() < lines.size() - 1) {
+                	setCaretPositionCheckSelect(_caretPosition.withRelativeRow(1).withColumn(0));
                 }
                 else if(horizontalFocusSwitching) {
                     return Result.MOVE_FOCUS_RIGHT;
                 }
                 return Result.HANDLED;
             case ArrowUp:
-                if(caretPosition.getRow() > 0) {
-                    int trueColumnPosition = TerminalTextUtils.getColumnIndex(lines.get(caretPosition.getRow()), caretPosition.getColumn());
-                    caretPosition = caretPosition.withRelativeRow(-1);
-                    line = lines.get(caretPosition.getRow());
-                    if(trueColumnPosition > TerminalTextUtils.getColumnWidth(line)) {
-                        caretPosition = caretPosition.withColumn(line.length());
-                    }
-                    else {
-                        caretPosition = caretPosition.withColumn(TerminalTextUtils.getStringCharacterIndex(line, trueColumnPosition));
-                    }
+            {
+            	checkSelectionStart(keyStroke);
+                if(_caretPosition.getRow() > 0) {
+                	jumpToLine(_caretPosition.getRow(), _caretPosition.getRow()-1);
                 }
                 else if(verticalFocusSwitching) {
                     return Result.MOVE_FOCUS_UP;
                 }
                 return Result.HANDLED;
+            }
             case ArrowDown:
-                if(caretPosition.getRow() < lines.size() - 1) {
-                    int trueColumnPosition = TerminalTextUtils.getColumnIndex(lines.get(caretPosition.getRow()), caretPosition.getColumn());
-                    caretPosition = caretPosition.withRelativeRow(1);
-                    line = lines.get(caretPosition.getRow());
-                    if(trueColumnPosition > TerminalTextUtils.getColumnWidth(line)) {
-                        caretPosition = caretPosition.withColumn(line.length());
-                    }
-                    else {
-                        caretPosition = caretPosition.withColumn(TerminalTextUtils.getStringCharacterIndex(line, trueColumnPosition));
-                    }
+            {
+            	checkSelectionStart(keyStroke);
+                if(_caretPosition.getRow() < lines.size() - 1) {
+                	jumpToLine(_caretPosition.getRow(), _caretPosition.getRow()+1);
                 }
                 else if(verticalFocusSwitching) {
                     return Result.MOVE_FOCUS_DOWN;
                 }
                 return Result.HANDLED;
+            }
             case End:
-                caretPosition = caretPosition.withColumn(line.length());
+            {
+                String line = lines.get(_caretPosition.getRow());
+            	checkSelectionStart(keyStroke);
+            	setCaretPositionCheckSelect(_caretPosition.withColumn(line.length()));
                 return Result.HANDLED;
+            }
             case Enter:
+            {
+				if(readOnly)
+				{
+					return Result.HANDLED;
+				}
+            	if(selection.active)
+            	{
+            		deleteSelectedContent();
+            	}
+                String line = lines.get(_caretPosition.getRow());
                 if(style == Style.SINGLE_LINE) {
-                    return Result.MOVE_FOCUS_NEXT;
+                	return singleLineEntered();
                 }
-                String newLine = line.substring(caretPosition.getColumn());
-                String oldLine = line.substring(0, caretPosition.getColumn());
-                if(validated(newLine) && validated(oldLine)) {
-                    lines.set(caretPosition.getRow(), oldLine);
-                    lines.add(caretPosition.getRow() + 1, newLine);
-                    caretPosition = caretPosition.withColumn(0).withRelativeRow(1);
-                }
+                String newLine = line.substring(_caretPosition.getColumn());
+                String oldLine = line.substring(0, _caretPosition.getColumn());
+                lines.set(_caretPosition.getRow(), oldLine);
+                lines.add(_caretPosition.getRow() + 1, newLine);
+                _caretPosition = _caretPosition.withColumn(0).withRelativeRow(1);
+                dataChanged();
                 return Result.HANDLED;
+            }
             case Home:
-                caretPosition = caretPosition.withColumn(0);
+            	checkSelectionStart(keyStroke);
+            	setCaretPositionCheckSelect(_caretPosition.withColumn(0));
                 return Result.HANDLED;
             case PageDown:
-                caretPosition = caretPosition.withRelativeRow(getSize().getRows());
-                if(caretPosition.getRow() > lines.size() - 1) {
-                    caretPosition = caretPosition.withRow(lines.size() - 1);
+            {
+            	checkSelectionStart(keyStroke);
+            	int toRow=_caretPosition.getRow()+getSize().getRows();
+                if(toRow > lines.size() - 1) {
+                    toRow = lines.size() - 1;
                 }
-                if(lines.get(caretPosition.getRow()).length() < caretPosition.getColumn()) {
-                    caretPosition = caretPosition.withColumn(lines.get(caretPosition.getRow()).length());
-                }
+            	jumpToLine(_caretPosition.getRow(), toRow);
                 return Result.HANDLED;
+            }
             case PageUp:
-                caretPosition = caretPosition.withRelativeRow(-getSize().getRows());
-                if(caretPosition.getRow() < 0) {
-                    caretPosition = caretPosition.withRow(0);
+            {
+            	checkSelectionStart(keyStroke);
+            	int toRow=_caretPosition.getRow()-getSize().getRows();
+                if(toRow < 0) {
+                    toRow = 0;
                 }
-                if(lines.get(caretPosition.getRow()).length() < caretPosition.getColumn()) {
-                    caretPosition = caretPosition.withColumn(lines.get(caretPosition.getRow()).length());
-                }
+            	jumpToLine(_caretPosition.getRow(), toRow);
                 return Result.HANDLED;
+            }
+            case F3:
+            {
+            	markOn=!markOn;
+            }
             default:
         }
         return super.handleKeyStroke(keyStroke);
     }
-
-    private boolean validated(String line) {
-        return validationPattern == null || line.isEmpty() || validationPattern.matcher(line).matches();
-    }
-
-    private Result handleKeyStrokeReadOnly(KeyStroke keyStroke) {
-        switch (keyStroke.getKeyType()) {
-            case ArrowLeft:
-                if(getRenderer().getViewTopLeft().getColumn() == 0 && horizontalFocusSwitching) {
-                    return Result.MOVE_FOCUS_LEFT;
-                }
-                getRenderer().setViewTopLeft(getRenderer().getViewTopLeft().withRelativeColumn(-1));
-                return Result.HANDLED;
-            case ArrowRight:
-                if(getRenderer().getViewTopLeft().getColumn() + getSize().getColumns() == longestRow && horizontalFocusSwitching) {
-                    return Result.MOVE_FOCUS_RIGHT;
-                }
-                getRenderer().setViewTopLeft(getRenderer().getViewTopLeft().withRelativeColumn(1));
-                return Result.HANDLED;
-            case ArrowUp:
-                if(getRenderer().getViewTopLeft().getRow() == 0 && verticalFocusSwitching) {
-                    return Result.MOVE_FOCUS_UP;
-                }
-                getRenderer().setViewTopLeft(getRenderer().getViewTopLeft().withRelativeRow(-1));
-                return Result.HANDLED;
-            case ArrowDown:
-                if(getRenderer().getViewTopLeft().getRow() + getSize().getRows() == lines.size() && verticalFocusSwitching) {
-                    return Result.MOVE_FOCUS_DOWN;
-                }
-                getRenderer().setViewTopLeft(getRenderer().getViewTopLeft().withRelativeRow(1));
-                return Result.HANDLED;
-            case Home:
-                getRenderer().setViewTopLeft(TerminalPosition.TOP_LEFT_CORNER);
-                return Result.HANDLED;
-            case End:
-                getRenderer().setViewTopLeft(TerminalPosition.TOP_LEFT_CORNER.withRow(getLineCount() - getSize().getRows()));
-                return Result.HANDLED;
-            case PageDown:
-                getRenderer().setViewTopLeft(getRenderer().getViewTopLeft().withRelativeRow(getSize().getRows()));
-                return Result.HANDLED;
-            case PageUp:
-                getRenderer().setViewTopLeft(getRenderer().getViewTopLeft().withRelativeRow(-getSize().getRows()));
-                return Result.HANDLED;
-            default:
+	private void jumpToLine(int from, int to) {
+		wantoToBeAtColumnShouldBePreserved=true;
+        String lineFrom = lines.get(from);
+		if(wantToBeAtColumn==-1)
+		{
+			wantToBeAtColumn=TerminalTextUtils.getColumnIndex(lineFrom, _caretPosition.getColumn());
+		}
+        int column=wantToBeAtColumn;
+        String lineTo = lines.get(to);
+        if(column > TerminalTextUtils.getColumnWidth(lineTo)) {
+            column=lineTo.length();
         }
-        return super.handleKeyStroke(keyStroke);
+        else {
+            column=TerminalTextUtils.getStringCharacterIndex(lineTo, column);
+        }
+        setCaretPositionCheckSelect(new TerminalPosition(column, to));
+	}
+
+	/**
+     * Get the top-left position of the current view.
+     * @return
+     */
+    public TerminalPosition getViewTopLeft()
+    {
+    	return getRenderer().getViewTopLeft();
     }
+
+	private String getSelectedContent() {
+		if(selection.active)
+		{
+			StringBuilder ret=new StringBuilder();
+			if(selection.fromLine==selection.toLine)
+			{
+				String line=getLine(selection.fromLine);
+				ret.append(line.substring(selection.fromCol,selection.toCol));
+			}else
+			{
+				String line=getLine(selection.fromLine);
+				ret.append(line.substring(selection.fromCol));
+				for(int i=selection.fromLine+1;i<selection.toLine; ++i)
+				{
+					ret.append("\n");
+					ret.append(lines.get(i));
+				}
+				line=getLine(selection.toLine);
+				ret.append("\n");
+				ret.append(line.substring(0, selection.toCol));
+			}
+			return ret.toString();
+		}else
+		{
+			return null;
+		}
+	}
+	private void deleteSelectedContent() {
+		if(selection.active)
+		{
+			TerminalPosition nc=new TerminalPosition(selection.fromCol, selection.fromLine);
+			if(selection.fromLine==selection.toLine)
+			{
+				String line=getLine(selection.fromLine);
+				lines.set(selection.fromLine, line.substring(0, selection.fromCol)+line.substring(selection.toCol, line.length()));
+			}else
+			{
+				String line=getLine(selection.fromLine);
+				lines.set(selection.fromLine, line.substring(0, selection.fromCol));
+				lines.remove(selection.fromLine+1, selection.toLine-(selection.fromLine+1));
+				line=getLine(selection.fromLine+1);
+				line=line.substring(selection.toCol);
+				lines.remove(selection.fromLine+1, 1);
+				lines.append(selection.fromLine, line);
+			}
+			if(nc.getRow()>=lines.size())
+			{
+				nc.withRow(lines.size()-1);
+			}
+			String line=lines.get(nc.getRow());
+			if(line.length()<=nc.getColumn())
+			{
+				nc.withColumn(line.length());
+			}
+			_caretPosition=nc;
+			selection.active=false;
+			selectionStartAt=null;
+		}
+	}
+
+	private void setCaretPositionCheckSelect(TerminalPosition nc) {
+		_caretPosition=nc;
+		if(selectionStartAt!=null)
+		{
+			TerminalPosition nc2=selectionStartAt;
+			int cmp=compare(nc, nc2);
+			if(cmp!=0)
+			{
+				if(cmp<0)
+				{
+					TerminalPosition atm=nc2;
+					nc2=nc;
+					nc=atm;
+				}
+				selection.active=true;
+				selection.fromLine=nc2.getRow();
+				selection.fromCol=nc2.getColumn();
+				selection.toLine=nc.getRow();
+				selection.toCol=nc.getColumn();
+			}else
+			{
+				selection.active=false;
+			}
+		}
+	}
+
+	private int compare(TerminalPosition nc, TerminalPosition selectionStartAt2) {
+		if(nc.getRow()>selectionStartAt2.getRow())
+		{
+			return 1;
+		}else if(nc.getRow()==selectionStartAt2.getRow())
+		{
+			return Integer.compare(nc.getColumn(), selectionStartAt2.getColumn());
+		}else
+		{
+			return -1;
+		}
+	}
+	private void deleteSelection()
+	{
+		selectionStartAt=null;
+		selection.active=false;
+	}
+	private void checkSelectionStart(KeyStroke keyStroke) {
+		if(keyStroke.isShiftDown()||markOn)
+		{
+			if(selectionStartAt==null)
+			{
+				selectionStartAt=_caretPosition;
+			}
+		}else
+		{
+			deleteSelection();
+		}
+	}
 
     /**
      * Helper interface that doesn't add any new methods but makes coding new text box renderers a little bit more clear
      */
     public interface TextBoxRenderer extends InteractableRenderer<TextBox> {
         TerminalPosition getViewTopLeft();
-        void setViewTopLeft(TerminalPosition position);
+        void setViewTopLeft(TextBox component, TerminalPosition position);
     }
 
     /**
@@ -688,22 +1166,22 @@ public class TextBox extends AbstractInteractableComponent<TextBox> {
         }
 
         @Override
-        public void setViewTopLeft(TerminalPosition position) {
+        public void setViewTopLeft(TextBox component, TerminalPosition position) {
             if(position.getColumn() < 0) {
                 position = position.withColumn(0);
             }
             if(position.getRow() < 0) {
                 position = position.withRow(0);
             }
-            viewTopLeft = position;
+            if(viewTopLeft==null||!viewTopLeft.equals(position))
+            {
+            	viewTopLeft = position;
+            	component.fireViewTopChanged();
+            }
         }
 
         @Override
         public TerminalPosition getCursorLocation(TextBox component) {
-            if(component.isReadOnly()) {
-                return null;
-            }
-
             //Adjust caret position if necessary
             TerminalPosition caretPosition = component.getCaretPosition();
             String line = component.getLine(caretPosition.getRow());
@@ -776,36 +1254,26 @@ public class TextBox extends AbstractInteractableComponent<TextBox> {
         }
 
         private void drawTextArea(TextGUIGraphics graphics, TextBox component) {
-            TerminalSize textAreaSize = graphics.getSize();
+
+        	TerminalSize textAreaSize = graphics.getSize();
             if(viewTopLeft.getColumn() + textAreaSize.getColumns() > component.longestRow) {
-                viewTopLeft = viewTopLeft.withColumn(component.longestRow - textAreaSize.getColumns());
-                if(viewTopLeft.getColumn() < 0) {
-                    viewTopLeft = viewTopLeft.withColumn(0);
+                TerminalPosition newviewTopLeft = viewTopLeft.withColumn(component.longestRow - textAreaSize.getColumns());
+                if(newviewTopLeft.getColumn() < 0) {
+                    newviewTopLeft = newviewTopLeft.withColumn(0);
+                    setViewTopLeft(component, newviewTopLeft);
                 }
             }
             if(viewTopLeft.getRow() + textAreaSize.getRows() > component.getLineCount()) {
-                viewTopLeft = viewTopLeft.withRow(component.getLineCount() - textAreaSize.getRows());
-                if(viewTopLeft.getRow() < 0) {
-                    viewTopLeft = viewTopLeft.withRow(0);
+            	TerminalPosition newviewTopLeft = viewTopLeft.withRow(component.getLineCount() - textAreaSize.getRows());
+                if(newviewTopLeft.getRow() < 0) {
+                    newviewTopLeft = newviewTopLeft.withRow(0);
+                    setViewTopLeft(component, newviewTopLeft);
                 }
             }
             ThemeDefinition themeDefinition = component.getThemeDefinition();
-            if (component.isFocused()) {
-                if(component.isReadOnly()) {
-                    graphics.applyThemeStyle(themeDefinition.getSelected());
-                }
-                else {
-                    graphics.applyThemeStyle(themeDefinition.getActive());
-                }
-            }
-            else {
-                if(component.isReadOnly()) {
-                    graphics.applyThemeStyle(themeDefinition.getInsensitive());
-                }
-                else {
-                    graphics.applyThemeStyle(themeDefinition.getNormal());
-                }
-            }
+            ThemeStyle style=getThemeStyle(component, themeDefinition);
+            ThemeStyle styleSelected=getThemeStyleSelected(component, themeDefinition);
+            graphics.applyThemeStyle(style);
 
             Character fillCharacter = unusedSpaceCharacter;
             if(fillCharacter == null) {
@@ -813,7 +1281,7 @@ public class TextBox extends AbstractInteractableComponent<TextBox> {
             }
             graphics.fill(fillCharacter);
 
-            if(!component.isReadOnly()) {
+            {
                 //Adjust caret position if necessary
                 TerminalPosition caretPosition = component.getCaretPosition();
                 String caretLine = component.getLine(caretPosition.getRow());
@@ -821,26 +1289,28 @@ public class TextBox extends AbstractInteractableComponent<TextBox> {
 
                 //Adjust the view if necessary
                 int trueColumnPosition = TerminalTextUtils.getColumnIndex(caretLine, caretPosition.getColumn());
-                if (trueColumnPosition < viewTopLeft.getColumn()) {
-                    viewTopLeft = viewTopLeft.withColumn(trueColumnPosition);
+                TerminalPosition viewTopLeftTemporary=viewTopLeft;
+                if (trueColumnPosition < viewTopLeftTemporary.getColumn()) {
+                    viewTopLeftTemporary = viewTopLeftTemporary.withColumn(trueColumnPosition);
                 }
-                else if (trueColumnPosition >= textAreaSize.getColumns() + viewTopLeft.getColumn()) {
-                    viewTopLeft = viewTopLeft.withColumn(trueColumnPosition - textAreaSize.getColumns() + 1);
+                else if (trueColumnPosition >= textAreaSize.getColumns() + viewTopLeftTemporary.getColumn()) {
+                    viewTopLeftTemporary = viewTopLeftTemporary.withColumn(trueColumnPosition - textAreaSize.getColumns() + 1);
                 }
-                if (caretPosition.getRow() < viewTopLeft.getRow()) {
-                    viewTopLeft = viewTopLeft.withRow(caretPosition.getRow());
+                if (caretPosition.getRow() < viewTopLeftTemporary.getRow()) {
+                    viewTopLeftTemporary = viewTopLeftTemporary.withRow(caretPosition.getRow());
                 }
-                else if (caretPosition.getRow() >= textAreaSize.getRows() + viewTopLeft.getRow()) {
-                    viewTopLeft = viewTopLeft.withRow(caretPosition.getRow() - textAreaSize.getRows() + 1);
+                else if (caretPosition.getRow() >= textAreaSize.getRows() + viewTopLeftTemporary.getRow()) {
+                    viewTopLeftTemporary = viewTopLeftTemporary.withRow(caretPosition.getRow() - textAreaSize.getRows() + 1);
                 }
 
                 //Additional corner-case for CJK characters
-                if(trueColumnPosition - viewTopLeft.getColumn() == graphics.getSize().getColumns() - 1) {
+                if(trueColumnPosition - viewTopLeftTemporary.getColumn() == graphics.getSize().getColumns() - 1) {
                     if(caretLine.length() > caretPosition.getColumn() &&
                             TerminalTextUtils.isCharCJK(caretLine.charAt(caretPosition.getColumn()))) {
-                        viewTopLeft = viewTopLeft.withRelativeColumn(1);
+                        viewTopLeftTemporary = viewTopLeftTemporary.withRelativeColumn(1);
                     }
                 }
+                setViewTopLeft(component, viewTopLeftTemporary);
             }
 
             for (int row = 0; row < textAreaSize.getRows(); row++) {
@@ -848,16 +1318,207 @@ public class TextBox extends AbstractInteractableComponent<TextBox> {
                 if(rowIndex >= component.lines.size()) {
                     continue;
                 }
-                String line = component.lines.get(rowIndex);
-                if(component.getMask() != null) {
-                    StringBuilder builder = new StringBuilder();
-                    for(int i = 0; i < line.length(); i++) {
-                        builder.append(component.getMask());
-                    }
-                    line = builder.toString();
+                LinePart[] parts=component.getLinePartsToRender(rowIndex, viewTopLeft.getColumn(), textAreaSize.getColumns());
+                for(LinePart p: parts)
+                {
+                	if(p.selected)
+                	{
+                        graphics.applyThemeStyle(styleSelected);
+                	}
+                	String s=TerminalTextUtils.fitString(p.characters, 0, p.length);
+                    graphics.putString(p.offset, row, s); 
+                	if(p.selected)
+                	{
+                        graphics.applyThemeStyle(style);
+                	}
                 }
-                graphics.putString(0, row, TerminalTextUtils.fitString(line, viewTopLeft.getColumn(), textAreaSize.getColumns()));
             }
         }
+
+		private ThemeStyle getThemeStyle(TextBox component, ThemeDefinition themeDefinition) {
+            if (component.isFocused()) {
+                if(component.isReadOnly()) {
+                    return themeDefinition.getSelected();
+                }
+                else {
+                	return themeDefinition.getActive();
+                }
+            }
+            else {
+                if(component.isReadOnly()) {
+                	return themeDefinition.getInsensitive();
+                }
+                else {
+                	return themeDefinition.getNormal();
+                }
+            }
+		}
+		private ThemeStyle getThemeStyleSelected(TextBox component, ThemeDefinition themeDefinition) {
+			return themeDefinition.getCustom("selectedText", themeDefinition.getInsensitive());
+		}
     }
+    /**
+     * Data model has changed. Fire listeners.
+     * This method may be called from within synchronized block. Listeners are fired 
+     * on an invokeLater call on the GUI thread.
+     */
+    private void dataChanged() {
+    	if(getTextGUI()!=null)
+    	{
+	    	getTextGUI().getGUIThread().invokeLater(new Runnable() {
+				@Override
+				public void run() {
+					fireDataChangeListeners();
+				}
+			});
+    	}
+	}
+
+	protected void fireViewTopChanged() {
+		
+	}
+
+	public LinePart[] getLinePartsToRender(int rowIndex, int column, int columns) {
+    	List<LinePart> ret=new ArrayList<>();
+    	String line=lines.get(rowIndex);
+    	if(selection.active &&selection.fromLine<=rowIndex&&selection.toLine>=rowIndex)
+    	{
+    		int fromCol=selection.fromCol;
+    		int toCol=selection.toCol;
+    		if(selection.toLine>rowIndex)
+    		{
+    			toCol=line.length();
+    		}
+    		if(selection.fromLine<rowIndex)
+    		{
+    			fromCol=0;
+    		}
+    		if(fromCol>line.length())
+    		{
+    			fromCol=line.length();
+    		}
+    		if(toCol>line.length())
+    		{
+    			toCol=line.length();
+    		}
+    		if(fromCol>0)
+    		{
+    			ret.add(new LinePart(false, line.substring(0, fromCol), 0, fromCol));
+    		}
+			ret.add(new LinePart(true, line.substring(fromCol, toCol), fromCol, toCol-fromCol));
+    		if(toCol<line.length())
+    		{
+    			ret.add(new LinePart(false, line.substring(toCol, line.length()), toCol, line.length()-toCol));
+    		}
+    	}else
+    	{
+    		ret.add(new LinePart(false, line, 0, line.length()));
+    	}
+    	
+        if(getMask() != null) {
+            StringBuilder builder = new StringBuilder();
+            for(int i = 0; i < line.length(); i++) {
+                builder.append(getMask());
+            }
+            line = builder.toString();
+        }
+		return ret.toArray(new LinePart[]{});
+	}
+
+	/**
+     * Fire data changed listeners.
+     * Default implementation does nothing.
+     */
+	protected void fireDataChangeListeners() {
+		
+	}
+	/**
+	 * Method is called when on a single line text box enter was pressed.
+	 * Default implementation passes the focus to the next element.
+	 */
+    synchronized protected Result singleLineEntered() {
+        return Result.MOVE_FOCUS_NEXT;
+	}
+    private void addUndoPiece(UndoPiece piece)
+    {
+    	if(recorder!=null)
+    	{
+    		recorder.recordPiece(piece);
+    	}
+    }
+    public ICommandStackRecorder getRecorder() {
+		return recorder;
+	}
+
+	public void setRecorder(ICommandStackRecorder recorder) {
+		this.recorder = recorder;
+	}
+	private void fixCaretPosition() {
+		if(_caretPosition.getRow()>=lines.size())
+		{
+			_caretPosition=_caretPosition.withRow(lines.size()-1);
+		}
+		String line=lines.get(_caretPosition.getRow());
+		if(_caretPosition.getColumn()>=line.length())
+		{
+			_caretPosition=_caretPosition.withColumn(line.length());
+		}
+	}
+	/**
+	 * Split string with preserving empty lines (even at the end of the string)
+	 * @param s
+	 * @return
+	 */
+	public static List<String> cleverSplit(String s)
+	{
+		List<String> ret=new ArrayList<>();
+		int at=0;
+		int idx=s.indexOf('\n');
+		while(idx>=0)
+		{
+			ret.add(s.substring(at, idx));
+			at=idx+1;
+			idx=s.indexOf('\n', at);
+		}
+		ret.add(s.substring(at));
+		return ret;
+	}
+	public void selectAll() {
+		selection.active=true;
+		selection.fromLine=0;
+		selection.fromCol=0;
+		selection.toCol=lines.get(lines.size()-1).length();
+		selection.toLine=lines.size()-1;
+	}
+	/**
+	 * Add data model listener. Data model listener is called whenever a line is added or removed from the model.
+	 * @param l
+	 */
+	public void addDataModelListener(IDataModelListener l)
+	{
+		datamodelListeners.add(l);
+	}
+	/**
+	 * Remove data model listener (see addDataModelListener)
+	 * @param l
+	 */
+	public void removeDataModelListener(IDataModelListener l)
+	{
+		datamodelListeners.add(l);
+	}
+
+	public TextBox setValidationPattern(Pattern numberPattern) {
+		return this;
+	}
+	public SelectionModel getSelection() {
+		return selection;
+	}
+
+	public void setSelection(int row1, int col1, int row2, int col2) {
+		selection.active=true;
+		selection.fromLine=row1;
+		selection.fromCol=col1;
+		selection.toLine=row2;
+		selection.toCol=col2;
+	}
 }

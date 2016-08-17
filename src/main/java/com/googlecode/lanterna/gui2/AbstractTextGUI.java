@@ -43,6 +43,7 @@ public abstract class AbstractTextGUI implements TextGUI {
     private boolean dirty;
     private TextGUIThread textGUIThread;
     private Theme guiTheme;
+    private ClipboardSupport clipboardSupport;
 
     /**
      * Constructor for {@code AbstractTextGUI} that requires a {@code Screen} and a factory for creating the GUI thread
@@ -158,6 +159,15 @@ public abstract class AbstractTextGUI implements TextGUI {
      */
     public boolean isBlockingIO() {
         return blockingIO;
+    }
+
+    @Override
+    public ClipboardSupport getClipboardSupport() {
+    	return clipboardSupport;
+    }
+    @Override
+    public void setClipboardSupport(ClipboardSupport clipboardSupport) {
+    	this.clipboardSupport=clipboardSupport;
     }
 
     /**

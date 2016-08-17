@@ -33,7 +33,7 @@ import java.util.List;
 public class DefaultWindowManager implements WindowManager {
 
     private final WindowDecorationRenderer windowDecorationRendererOverride;
-    private TerminalSize lastKnownScreenSize;
+    protected TerminalSize lastKnownScreenSize;
 
     /**
      * Default constructor, will create a window manager that uses {@code DefaultWindowDecorationRenderer} for drawing

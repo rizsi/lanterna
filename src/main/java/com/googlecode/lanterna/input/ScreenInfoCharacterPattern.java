@@ -48,12 +48,12 @@ public class ScreenInfoCharacterPattern extends EscapeSequenceCharacterPattern {
         }
         switch (ks.getKeyType()) {
         case CursorLocation: return (ScreenInfoAction)ks;
-        case F3: // reconstruct position from F3's modifiers.
+/*        case F3: // reconstruct position from F3's modifiers.
             int col = 1 + (ks.isAltDown()  ? ALT  : 0)
                         + (ks.isCtrlDown() ? CTRL : 0)
                         + (ks.isShiftDown()? SHIFT: 0);
             TerminalPosition pos = new TerminalPosition(col,1);
-            return new ScreenInfoAction(pos);
+            return new ScreenInfoAction(pos);*/
         default:  return null;
         }
     }

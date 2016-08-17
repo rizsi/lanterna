@@ -1,7 +1,7 @@
-.classpath
-.project
-.settings/
 .idea/
 nb-configuration.xml
 target/
 *.iml
+/bin/
+*~
+

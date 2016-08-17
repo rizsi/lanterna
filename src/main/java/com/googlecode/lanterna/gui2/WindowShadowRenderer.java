@@ -48,7 +48,7 @@ public class WindowShadowRenderer implements WindowPostRenderer {
         for(int column = lowerLeft.getColumn(); column <= lowerRight.getColumn(); column++) {
             char characterToDraw = filler;
             if(useTransparency) {
-                characterToDraw = textGraphics.getCharacter(column, lowerLeft.getRow()).getCharacter();
+                characterToDraw = getChar(textGraphics.getCharacter(column, lowerLeft.getRow()));
             }
             textGraphics.setCharacter(column, lowerLeft.getRow(), characterToDraw);
         }
@@ -58,7 +58,7 @@ public class WindowShadowRenderer implements WindowPostRenderer {
         for(int row = upperRight.getRow(); row <= lowerRight.getRow(); row++) {
             char characterToDraw = filler;
             if(useTransparency) {
-                characterToDraw = textGraphics.getCharacter(upperRight.getColumn(), row).getCharacter();
+                characterToDraw = getChar(textGraphics.getCharacter(upperRight.getColumn(), row));
             }
             textGraphics.setCharacter(upperRight.getColumn(), row, characterToDraw);
         }
@@ -69,10 +69,14 @@ public class WindowShadowRenderer implements WindowPostRenderer {
             for(int row = upperRight.getRow(); row <= lowerRight.getRow(); row++) {
                 char characterToDraw = filler;
                 if(useTransparency) {
-                    characterToDraw = textGraphics.getCharacter(upperRight.getColumn(), row).getCharacter();
+                    characterToDraw = getChar(textGraphics.getCharacter(upperRight.getColumn(), row));
                 }
                 textGraphics.setCharacter(upperRight.getColumn(), row, characterToDraw);
             }
         }
     }
+
+	private char getChar(TextCharacter character) {
+		return character==null?' ':character.getCharacter();
+	}
 }
